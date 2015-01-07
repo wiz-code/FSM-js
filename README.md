@@ -1,6 +1,8 @@
 # FSM-js
 JavaScriptによるステートマシン実装のためのライブラリです。
 # 使い方の例
+
+```JavaScript
 var machine = new FSM('machine');
 
 var stateFirst = new State('state-first', {  
@@ -18,3 +20,4 @@ machine.addTransition(firstTransition);
 machine.addTransition(secondTransition);
 
 machine.start();
+```
