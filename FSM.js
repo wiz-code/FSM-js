@@ -1,6 +1,6 @@
 /*
  * FSM.js
- * version 0.5.0
+ * version 0.5.1
  * Copyright (c) 2014 Masa (http://wiz-code.digick.jp)
  * 
  * LICENSE: MIT license
@@ -281,6 +281,7 @@
 			this._startTime = 0;
 			this._ticks = 0;
 			this._frames = 0;
+			this._count = 0;
 
 			if (!_.isUndefined(options.data)) {
 				_.extend(this._data, options.data);
@@ -377,9 +378,18 @@
 				logger('warn', 'タイマーが起動していません。');
 			}
 		},
+		/* getCurrentFrames()メソッドはrequestAnimationFrame()が呼ばれた数を返す */
 		getCurrentFrames: function () {
 			if (this._startTime) {
 				return this._frames;
+			} else {
+				logger('warn', 'タイマーが起動していません。');
+			}
+		},
+		/* getCount()メソッドはdoActivity()が呼ばれた数を返す */
+		getCount: function () {
+			if (this._startTime) {
+				return this._count;
 			} else {
 				logger('warn', 'タイマーが起動していません。');
 			}
@@ -531,38 +541,42 @@
 			}
 		},
 		_setTimer: function () {
-			var _state, _count;
+			var _state;
 
 			_state = this;
+
 			_state._startTime = 0;
 			_state._ticks = 0;
 			_state._frames = 0;
+			_state._count = 0;
 			_state._timerRunning = true;
 
-			_count = 1;
 			_state._timerId = requestAnimationFrame(_loop);
 
 			function _loop(timestamp) {
+				var currentTime;
+				currentTime = timestamp ? timestamp : now();
 				if (!_state._startTime) {
-					_state._startTime = timestamp ? timestamp : now();
+					_state._startTime = currentTime;
 				}
 
-				_state._ticks = timestamp ? timestamp - _state._startTime : now() - _state._startTime;
+				_state._ticks = currentTime - _state._startTime;
 				_state._frames += 1;
 
-				if (_state._ticks >= _state._interval * _count) {
-					_count += 1;
+				if (_state._ticks >= _state._interval * _state._count) {
+					_state._count += 1;
 					_state._do();
 				}
-				
+
 				if (_state._timerRunning) {
 					_state._timerId = requestAnimationFrame(_loop);
 				} else {
 					cancelAnimationFrame(_state._timerId);
-					
+
 					_state._startTime = 0;
 					_state._ticks = 0;
 					_state._frames = 0;
+					_state._count = 0;
 				}
 			}
 		},
@@ -634,7 +648,7 @@
 			}
 
 			/* ガードが設定されていたら、ガード判定する */
-			if (this._guard) {
+			if (!_.isNull(this._guard)) {
 				if (!this._guard(memo)) {
 					return logger('info', 'ガードが成立しませんでした。遷移は発生しません。');
 				}
