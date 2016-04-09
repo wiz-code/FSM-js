@@ -1,25 +1,25 @@
 /*
  * FSM.js
- * version 0.5.1
+ * version 0.6.1
  * Copyright (c) 2014 Masa (http://wiz-code.digick.jp)
  * 
  * LICENSE: MIT license
  * http://wiz-code.digick.jp/dev/MIT-LICENSE.txt
+ * 
+ * ver0.6.0からの変更点
+ * 
+ * "emptyFuction"を"_.noop"に置換
+ * "uuid"の生成コードをよりモダンな方法に変更
+ *
+ * RequestAnimationFrameのポリフィルで変数lastTimeが未宣言だったので修正
+ * 内部メソッドnow()を廃止し、performance.now()に置換
+ * windowオブジェクトが混在していたので、globalに統一
  */
 
-
-/***********************************************************************************************************
- * 追加・修正箇所:
- * ユーティリティ関数を削除し、Underscore.jsに依存
- * 
- * 使用可能な機能: コンポジット状態・直交状態・浅い（深い）履歴・自動（完了）遷移、サブマシン状態の再利用
- ***********************************************************************************************************/
-
-
-(function (global) {
+;(function (global) {
 	'use strict';
 
-	var FSM, State, Transition, Region, logger, now, emptyFunction, requestAnimationFrame, cancelAnimationFrame, uuid, klass, stateOptions, K;
+	var FSM, State, Transition, Region, logger, timing, requestAnimationFrame, cancelAnimationFrame, uuid, klass, stateOptions, Base;
 
 	logger = function (type, message) {
 		if (logger.debuggable) {
@@ -53,42 +53,48 @@
 	logger.level = 3;
 	logger.debuggable = true;
 
-	now = (function () {
-		var polyfill = window.performance && (
-			window.performance.now ||
-			window.performance.webkitNow ||
-			window.performance.oNow ||
-			window.performance.mozNow) ||
-			function () {return (new Date()).getTime();};
+	if (global.hasOwnProperty('performance') === false) {
+		global.performance = {};
 
-		return function () {
-			return polyfill.call(window.performance);
-		};
-	}());
+		Date.now = (Date.now || function () {
+			return new Date().getTime();
+		});
 
-	emptyFunction = function () {};
+		if (global.performance.hasOwnProperty('now') === false) {
+			if (global.performance.timing && global.performance.timing.navigationStart){
+			  timing = global.performance.timing.navigationStart;
+			} else {
+				timing = Date.now();
+			}
 
-	if (_.isUndefined(window.console)) {
-		window.console = {
-			log: emptyFunction,
-			debug: emptyFunction,
-			info: emptyFunction,
-			warn: emptyFunction,
-			error: emptyFunction
+			global.performance.now = function (){
+				return Date.now() - timing;
+			}
+		}
+	}
+
+	if (_.isUndefined(global.console)) {
+		global.console = {
+			log: _.noop,
+			debug: _.noop,
+			info: _.noop,
+			warn: _.noop,
+			error: _.noop
 		};
 	}
 
 	requestAnimationFrame = (function () {
-		return window.requestAnimationFrame ||
-			window.webkitRequestAnimationFrame ||
-			window.mozRequestAnimationFrame ||
-			window.msRequestAnimationFrame ||
-			window.oRequestAnimationFrame ||
+		var lastTime = 0;
+		return global.requestAnimationFrame ||
+			global.webkitRequestAnimationFrame ||
+			global.mozRequestAnimationFrame ||
+			global.msRequestAnimationFrame ||
+			global.oRequestAnimationFrame ||
 			function (callback) {
-				var currTime, timeToCall, id, lastTime;
+				var currTime, timeToCall, id;
 				currTime = new Date().getTime();
 				timeToCall = Math.max(0, 16 - (currTime - lastTime));
-				id = window.setTimeout(function () {
+				id = global.setTimeout(function () {
 					callback(currTime + timeToCall);
 				}, timeToCall);
 				lastTime = currTime + timeToCall;
@@ -97,22 +103,32 @@
 	}());
 
 	cancelAnimationFrame = (function () {
-		return window.cancelAnimationFrame ||
-			window.webkitCancelAnimationFrame ||
-			window.mozCancelAnimationFrame ||
-			window.msCancelAnimationFrame ||
-			window.oCancelAnimationFrame ||
+		return global.cancelAnimationFrame ||
+			global.webkitCancelAnimationFrame ||
+			global.mozCancelAnimationFrame ||
+			global.msCancelAnimationFrame ||
+			global.oCancelAnimationFrame ||
 			function (id) {
-				window.clearTimeout(id);
+				global.clearTimeout(id);
 			};
 	}());
 
 	uuid = {};
 	uuid.v4 = function () {
-		function S4() {
-			return (((1 + Math.random()) * 0x10000) | 0).toString(16).slice(1);
+		var r, v;
+		if (global.crypto && global.crypto.getRandomValues && Uint8Array) {
+			return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+    			r = global.crypto.getRandomValues(new Uint8Array(1))[0] % 16 | 0;
+				v = c === 'x' ? r : (r & 0x3 | 0x8);
+    			return v.toString(16);
+			});
+		} else {
+			return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+				r = Math.random() * 16 | 0;
+				v = c === 'x' ? r : (r & 0x3 | 0x8);
+				return v.toString(16);
+			});
 		}
-		return (S4() + S4() + '-' + S4() + '-4' + S4().slice(0,3) + '-' + S4() + '-' + S4() + S4() + S4()).toLowerCase();
 	};
 
 	klass = function (Parent, props) {
@@ -143,7 +159,7 @@
 		return Child;
 	};
 
-	K = new klass(null, {
+	Base = new klass(null, {
 		__construct: function (name) {
 			this._id = uuid.v4();
 			this._name = _.isNull(name) ? this._id : name;
@@ -161,7 +177,7 @@
 		}
 	});
 
-	FSM = new klass(K, {
+	FSM = new klass(Base, {
 		__construct: function (fsmName) {
 			this._type = 'fsm';
 
@@ -175,6 +191,14 @@
 		},
 		addTransition: function (transition) {
 			return this._region.addTransition(transition);
+		},
+		addStateAsChoicePseudo: function (state, condition) {
+			state._isPseudo = true;
+			state._isChoice = true;
+			state._condition = _.isFunction(condition) ? condition : state._condition;
+			state._transitCache = {};
+			
+			return this._region.addState(state);
 		},
 		get: function (key) {
 			return this._machine._data[key];
@@ -252,9 +276,9 @@
 	});
 
 	stateOptions = {
-		entryAction: emptyFunction,
-		exitAction: emptyFunction,
-		doActivity: emptyFunction,
+		entryAction: _.noop,
+		exitAction: _.noop,
+		doActivity: _.noop,
 
 		timer: false,
 		interval: 1000,
@@ -270,7 +294,7 @@
 	};
 
 	/* 遷移名を省略するときは、第１引数にnullを渡す */
-	State = new klass(K, {
+	State = new klass(Base, {
 		__construct: function (stateName, options) {
 			this._type = 'state';
 
@@ -308,6 +332,9 @@
 			this._isInitial = options._isInitial;
 			this._isHistory = options._isHistory;
 			this._isPseudo = options._isPseudo;
+
+			this._isChoice = false;
+			this._condition = _.noop;
 		},
 
 		/* パブリックメソッド */
@@ -352,6 +379,19 @@
 			_historyState = this._regions[0].addHistoryState(deep);
 
 			return _historyState;
+		},
+		addStateAsChoicePseudo: function (state, condition) {
+			state._isPseudo = true;
+			state._isChoice = true;
+			state._condition = _.isFunction(condition) ? condition : state._condition;
+			state._transitCache = {};
+			
+			if (!this._regions.length) {
+				this.appendRegion(new Region());
+			}
+			this._regions[0].addState(state);
+			
+			return state;
 		},
 		completion: function () {
 			var _transition;
@@ -471,7 +511,7 @@
 			}
 		},
 		_activate: function () {
-			var _firstTrans;
+			var _firstTrans, _targetStateName;
 
 			if (!this.isActive()) {
 				this._status = 'active';
@@ -483,15 +523,11 @@
 						if (!_.isNull(this._container._last)) {
 							this._inactivate();
 							this._container._last._activate();
-							return;
 						} else {
 							this._inactivate();
 							this._container._initialPseudo._activate();
-							return;
 						}
-					}
-
-					if (this._isInitial) {
+					} else if (this._isInitial) {
 						_firstTrans = _.find(this._container._transitions, function (t) {
 							return _.isNull(t._sourceStateName);
 						});
@@ -500,6 +536,17 @@
 						} else {
 							logger('error', '初期状態への遷移が定義されていません。');
 						}
+					} else if (this._isChoice) {
+						_targetStateName = this._condition();
+						if (!_.isString(_targetStateName)) {
+							logger('error', '遷移先の状態が定義されていません。');
+						}
+						
+						if (_.isUndefined(this._transitCache[_targetStateName])) {
+							this._transitCache[_targetStateName] = new Transition(this._name + '-to-' + _targetStateName, this._name, _targetStateName);
+							this._container.addTransition(this._transitCache[_targetStateName]);
+						}
+						this._transitCache[_targetStateName].trigger();
 					}
 				} else if (this._isFinal) {
 					this._inactive();
@@ -527,14 +574,16 @@
 
 				logger('info', 'State"' + this._name + '"が非アクティブ化されました。');
 
-				if (!(this._isPseudo || this._isFinal || this._isMachine)) {
+				if (this._isPseudo || this._isFinal) {
+					
+				} else if (this._isMachine) {
+					logger('info', 'ステートマシン"' + this._name + '"が動作を終了しました。');
+				} else {
 					if (this._timer) {
 						this._clearTimer();
 					}
 					this._container._last = this;
 					this._exit();
-				} else if (this._isMachine) {
-					logger('info', 'ステートマシン"' + this._name + '"が動作を終了しました。');
 				}
 			} else {
 				logger('error', 'このState"' + this._name + '"はすでに非アクティブ化されています。');
@@ -555,20 +604,21 @@
 
 			function _loop(timestamp) {
 				var currentTime;
-				currentTime = timestamp ? timestamp : now();
-				if (!_state._startTime) {
-					_state._startTime = currentTime;
-				}
-
-				_state._ticks = currentTime - _state._startTime;
-				_state._frames += 1;
-
-				if (_state._ticks >= _state._interval * _state._count) {
-					_state._count += 1;
-					_state._do();
-				}
 
 				if (_state._timerRunning) {
+					currentTime = timestamp ? timestamp : performance.now();
+					if (!_state._startTime) {
+						_state._startTime = currentTime;
+					}
+
+					_state._ticks = currentTime - _state._startTime;
+					_state._frames += 1;
+
+					if (_state._ticks >= _state._interval * _state._count) {
+						_state._count += 1;
+						_state._do();
+					}
+
 					_state._timerId = requestAnimationFrame(_loop);
 				} else {
 					cancelAnimationFrame(_state._timerId);
@@ -586,7 +636,7 @@
 	});
 
 	/* 遷移名を省略するときは、第１引数にnullを渡す。addTransition()するRegionは、遷移元のStateが含まれるRegionでなければならない */
-	Transition = new klass(K, {
+	Transition = new klass(Base, {
 		__construct: function (transitionName, sourceStateName, targetStateName, options) {
 			this._type = 'transition';
 
@@ -597,7 +647,7 @@
 
 			options = _.defaults(options || {}, {
 				guard: null,
-				effect: emptyFunction,
+				effect: _.noop,
 				internal: false
 			});
 
@@ -674,7 +724,7 @@
 	});
 
 	/* RegionインスタンスはStateクラスのappendRegionメソッドで追加する。 */
-	Region = new klass(K, {
+	Region = new klass(Base, {
 		__construct: function (regionName) {
 			this._type = 'region';
 
@@ -830,5 +880,4 @@
 	global.State = State;
 	global.Transition = Transition;
 	global.Region = Region;
-
 }(this));
